@@ -1,0 +1,15 @@
+# Archivos de sistema
+__pycache__/
+*.pyc
+
+# Base de datos local (No subir, la nube crea la suya)
+inventario.db
+
+# Secretos y Llaves (CRÍTICO: NUNCA SUBIR)
+credentials.json
+secrets.toml
+generar_secreto.py
+.streamlit/
+
+# Archivos temporales de Excel
+~$*.xlsxs
