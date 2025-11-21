@@ -17,29 +17,31 @@ TIMEOUT_SEGUNDOS = 3600 # 1 Hora de inactividad
 
 st.set_page_config(page_title=NOMBRE_NEGOCIO, layout="wide", page_icon="📒")
 
-# --- ESTILOS PROFESIONALES (WHITELABEL) ---
-# --- ESTILOS PROFESIONALES (CORREGIDO) ---
+# --- ESTILOS CORREGIDOS (V13.2) ---
 st.markdown("""
     <style>
-    /* 1. Ocultar la DECORACIÓN de colores (La franja arcoiris), no la barra entera */
-    [data-testid="stDecoration"] {
-        display: none;
-    }
-    
-    /* 2. Ocultar el menú de opciones (Hamburguesa) de la derecha */
+    /* 1. Ocultar Menú de la derecha (Hamburguesa) */
     [data-testid="stToolbar"] {
         visibility: hidden;
-    }
-
-    /* 3. Ocultar el pie de página */
-    footer {
-        visibility: hidden;
+        height: 0%;
     }
     
-    /* 4. Ajustar espacio */
-    .block-container {
-        padding-top: 2rem;
-        padding-bottom: 1rem;
+    /* 2. Ocultar la línea de colores de arriba */
+    [data-testid="stDecoration"] {
+        visibility: hidden;
+        height: 0%;
+    }
+
+    /* 3. Ocultar pie de página */
+    footer {
+        visibility: hidden;
+        height: 0%;
+    }
+
+    /* 4. IMPORTANTE: Hacemos el header transparente pero VISIBLE
+       para que el botón de la flecha (sidebar toggle) siga funcionando */
+    [data-testid="stHeader"] {
+        background: transparent;
     }
 
     /* Estilos del Ticket */
@@ -69,7 +71,6 @@ if 'last_active' not in st.session_state: st.session_state.last_active = time.ti
 
 # --- JAVASCRIPT: AUTO-FOCUS ---
 def set_focus_on_scan():
-    """Inyecta JS para poner el cursor en el input de escaneo automáticamente"""
     components.html(
         f"""
             <script>
@@ -98,7 +99,7 @@ def hora_actual():
     zona_mx = pytz.timezone('America/Mexico_City')
     return datetime.now(zona_mx).strftime("%Y-%m-%d %H:%M:%S")
 
-# --- BASE DE DATOS LOCAL (SQLite) ---
+# --- BASE DE DATOS LOCAL ---
 @st.cache_resource
 def get_sql_connection():
     return sqlite3.connect('inventario.db', check_same_thread=False)
@@ -124,7 +125,7 @@ def init_local_db():
 init_local_db()
 conn = get_sql_connection()
 
-# --- CONEXIÓN GOOGLE SHEETS ---
+# --- GOOGLE SHEETS ---
 def get_gsheet_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
@@ -132,7 +133,7 @@ def get_gsheet_client():
     except FileNotFoundError:
         return gspread.authorize(ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope))
 
-# --- FUNCIONES DE SINCRONIZACIÓN ---
+# --- FUNCIONES NUBE ---
 def sincronizar_inventario_descarga():
     try:
         client = get_gsheet_client()
@@ -194,7 +195,6 @@ def actualizar_stock_nube_lote(lista_cambios):
                 fila = mapa[scod]
                 curr = next((p['Stock'] for p in todos if str(p['Codigo']) == scod), 0)
                 batch.append({'range': f'D{fila}', 'values': [[int(curr) - cant]]})
-        
         if batch: 
             sheet.batch_update(batch)
             st.session_state.ultima_sinc = hora_actual()
@@ -210,7 +210,7 @@ def registrar_venta_nube_historial(fecha, ticket_id, vendedor, total, resumen):
         return True
     except: return False
 
-# --- LÓGICA PRINCIPAL ---
+# --- LÓGICA APP ---
 def login(u, p):
     df = pd.read_sql("SELECT * FROM usuarios WHERE nombre=? AND password=?", conn, params=(u,p))
     if not df.empty:
@@ -295,11 +295,10 @@ if not st.session_state.inventario_sincronizado:
 if not st.session_state.logged_in:
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
-        st.markdown(f"<h2 style='text-align: center;'>🔒 Acceso {NOMBRE_NEGOCIO}</h2>", unsafe_allow_html=True)
-        st.write("")
+        st.header(f"🔒 {NOMBRE_NEGOCIO}")
         with st.form("log"):
             u = st.text_input("Usuario"); p = st.text_input("Password", type="password")
-            if st.form_submit_button("Iniciar Sesión", type="primary"): login(u,p)
+            if st.form_submit_button("Entrar"): login(u,p)
 else:
     with st.sidebar:
         st.markdown(f"### {NOMBRE_NEGOCIO}")
@@ -317,7 +316,6 @@ else:
     if menu == "Punto de Venta":
         st.subheader("🛒 Caja Registradora")
         set_focus_on_scan()
-        
         c_scan, c_qty = st.columns([3, 1])
         with c_qty: st.number_input("Cant", 1, 100, 1, key="qty_scan")
         with c_scan: st.text_input("Escanear (Enter)", key="input_scan", on_change=scan_callback)
@@ -380,7 +378,7 @@ else:
         else:
             with st.expander("➕ Nuevo Producto"):
                 c1,c2,c3,c4=st.columns(4)
-                nc=c1.text_input("Código", key="n_c"); nn=c2.text_input("Nombre", key="n_n"); np=c3.number_input("Precio",0.0, key="n_p"); ns=c4.number_input("Stock",1, key="n_s")
+                nc=c1.text_input("Código",key="n_c"); nn=c2.text_input("Nombre",key="n_n"); np=c3.number_input("Precio",0.0,key="n_p"); ns=c4.number_input("Stock",1,key="n_s")
                 if st.button("Guardar"):
                     if nc and nn: guardar_producto_nube(nc,nn,np,ns); sincronizar_inventario_descarga(); st.success("OK"); st.rerun()
             df = pd.read_sql("SELECT * FROM productos", conn)
