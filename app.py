@@ -6,24 +6,61 @@ import time
 import io
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import pytz # Librería para Zona Horaria
+import pytz
+import streamlit.components.v1 as components
 
-# --- 1. CONFIGURACIÓN DEL NEGOCIO (PERSONALIZACIÓN) ---
-NOMBRE_NEGOCIO = "Papelería [Tu Logo Aquí]"
+# --- 1. CONFIGURACIÓN DEL NEGOCIO ---
+NOMBRE_NEGOCIO = "Papelería La Esperanza"
 UBICACION = "Guadalajara, Jal."
 MONEDA = "$"
+TIMEOUT_SEGUNDOS = 3600 # 1 Hora de inactividad
 
 st.set_page_config(page_title=NOMBRE_NEGOCIO, layout="wide", page_icon="📒")
 
-# --- ESTILOS ---
+# --- ESTILOS PROFESIONALES (WHITELABEL) ---
 st.markdown("""
     <style>
-    .ticket { background-color: #fff; color: #000; padding: 20px; border: 1px dashed #333; font-family: monospace; font-size: 12px; }
-    .big-total { font-size: 28px; font-weight: bold; color: #2E7D32; }
+    /* 1. Ocultar la barra superior completa (Header) */
+    [data-testid="stHeader"] {
+        display: none;
+    }
+    
+    /* 2. Ocultar el menú de opciones (Hamburguesa) */
+    [data-testid="stToolbar"] {
+        visibility: hidden;
+    }
+
+    /* 3. Ocultar el pie de página (Made with Streamlit) */
+    footer {
+        visibility: hidden;
+    }
+    
+    /* 4. Ajustar el espacio para que el contenido suba y aproveche la pantalla */
+    .block-container {
+        padding-top: 1rem;
+        padding-bottom: 1rem;
+    }
+
+    /* Estilos del Ticket y Totales */
+    .ticket { 
+        background-color: #fff; 
+        color: #000; 
+        padding: 20px; 
+        border: 1px dashed #333; 
+        font-family: 'Courier New', Courier, monospace; 
+        font-size: 12px; 
+        line-height: 1.2;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    .big-total { 
+        font-size: 28px; 
+        font-weight: bold; 
+        color: #2E7D32; 
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- ESTADO ---
+# --- ESTADO DE SESIÓN ---
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'usuario_actual' not in st.session_state: st.session_state.usuario_actual = None
 if 'rol_actual' not in st.session_state: st.session_state.rol_actual = None
@@ -31,13 +68,40 @@ if 'carrito' not in st.session_state: st.session_state.carrito = []
 if 'inventario_sincronizado' not in st.session_state: st.session_state.inventario_sincronizado = False
 if 'editando_id' not in st.session_state: st.session_state.editando_id = None
 if 'ultima_sinc' not in st.session_state: st.session_state.ultima_sinc = "Pendiente"
+if 'last_active' not in st.session_state: st.session_state.last_active = time.time()
 
-# --- 2. FUNCIÓN DE HORA MÉXICO ---
+# --- JAVASCRIPT: AUTO-FOCUS ---
+def set_focus_on_scan():
+    """Inyecta JS para poner el cursor en el input de escaneo automáticamente"""
+    components.html(
+        f"""
+            <script>
+                var input = window.parent.document.querySelectorAll("input[type=text]");
+                for (var i = 0; i < input.length; ++i) {{
+                    if (input[i].ariaLabel == "Escanear (Enter)") {{
+                        input[i].focus();
+                    }}
+                }}
+            </script>
+        """,
+        height=0
+    )
+
+# --- SEGURIDAD: TIMEOUT ---
+def check_timeout():
+    if st.session_state.logged_in:
+        now = time.time()
+        if (now - st.session_state.last_active) > TIMEOUT_SEGUNDOS:
+            logout()
+        else:
+            st.session_state.last_active = now
+
+# --- HORA LOCAL ---
 def hora_actual():
     zona_mx = pytz.timezone('America/Mexico_City')
     return datetime.now(zona_mx).strftime("%Y-%m-%d %H:%M:%S")
 
-# --- SQLITE LOCAL ---
+# --- BASE DE DATOS LOCAL (SQLite) ---
 @st.cache_resource
 def get_sql_connection():
     return sqlite3.connect('inventario.db', check_same_thread=False)
@@ -52,12 +116,10 @@ def init_local_db():
     
     c.execute('SELECT count(*) FROM usuarios')
     if c.fetchone()[0] == 0:
-        # Seguridad: Intenta leer secretos, si no, usa default local
         if "general" in st.secrets and "admin_password" in st.secrets["general"]:
             pass_admin = st.secrets["general"]["admin_password"]
         else:
-            pass_admin = "admin123" # Solo funcionará en local si no hay secrets.toml
-            
+            pass_admin = "admin123" 
         c.execute("INSERT INTO usuarios (nombre, password, rol) VALUES ('Admin', ?, 'Gerente')", (pass_admin,))
         c.execute("INSERT INTO usuarios (nombre, password, rol) VALUES ('Cajero1', '1234', 'Empleado')")
     conn.commit()
@@ -65,7 +127,7 @@ def init_local_db():
 init_local_db()
 conn = get_sql_connection()
 
-# --- GOOGLE SHEETS CLIENT ---
+# --- CONEXIÓN GOOGLE SHEETS ---
 def get_gsheet_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
@@ -73,7 +135,7 @@ def get_gsheet_client():
     except FileNotFoundError:
         return gspread.authorize(ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope))
 
-# --- FUNCIONES NUBE ---
+# --- FUNCIONES DE SINCRONIZACIÓN ---
 def sincronizar_inventario_descarga():
     try:
         client = get_gsheet_client()
@@ -151,22 +213,22 @@ def registrar_venta_nube_historial(fecha, ticket_id, vendedor, total, resumen):
         return True
     except: return False
 
-# --- LÓGICA APP ---
+# --- LÓGICA PRINCIPAL ---
 def login(u, p):
     df = pd.read_sql("SELECT * FROM usuarios WHERE nombre=? AND password=?", conn, params=(u,p))
     if not df.empty:
         st.session_state.logged_in=True; st.session_state.usuario_actual=df.iloc[0]['nombre']; st.session_state.rol_actual=df.iloc[0]['rol']
+        st.session_state.last_active = time.time()
         st.rerun()
     else: st.error("Datos incorrectos")
 
-# --- 3. LOGOUT LIMPIO ---
 def logout():
-    # Borra todas las variables de sesión de golpe
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
 
 def scan_callback():
+    st.session_state.last_active = time.time() 
     codigo = st.session_state.input_scan
     if codigo:
         df = pd.read_sql("SELECT * FROM productos WHERE codigo_barra = ?", conn, params=(codigo,))
@@ -189,8 +251,8 @@ def scan_callback():
     st.session_state.input_scan = ""
 
 def procesar_venta_final(vendedor, pago):
+    st.session_state.last_active = time.time()
     total = sum(i['subtotal'] for i in st.session_state.carrito)
-    # Usamos hora México
     fecha = hora_actual()
     
     c = conn.cursor()
@@ -198,7 +260,6 @@ def procesar_venta_final(vendedor, pago):
     v_id = c.lastrowid
     
     resumen = ""
-    # Ticket Personalizado
     ticket = f"{NOMBRE_NEGOCIO}\n{UBICACION}\n\nTICKET #{v_id}\nFECHA: {fecha}\nATENDIÓ: {vendedor}\n{'-'*30}\n"
     
     cambios_nube = []
@@ -225,20 +286,23 @@ def to_excel(df):
     with pd.ExcelWriter(output, engine='openpyxl') as writer: df.to_excel(writer, index=False)
     return output.getvalue()
 
-# --- INICIO ---
+# --- EJECUCIÓN ---
+check_timeout() 
+
 if not st.session_state.inventario_sincronizado:
     with st.spinner("🔄 Iniciando sistema..."):
         sincronizar_inventario_descarga()
     st.session_state.inventario_sincronizado = True
 
-# --- UI ---
+# --- FRONTEND ---
 if not st.session_state.logged_in:
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
-        st.header(f"🔒 {NOMBRE_NEGOCIO}")
+        st.markdown(f"<h2 style='text-align: center;'>🔒 Acceso {NOMBRE_NEGOCIO}</h2>", unsafe_allow_html=True)
+        st.write("")
         with st.form("log"):
             u = st.text_input("Usuario"); p = st.text_input("Password", type="password")
-            if st.form_submit_button("Entrar"): login(u,p)
+            if st.form_submit_button("Iniciar Sesión", type="primary"): login(u,p)
 else:
     with st.sidebar:
         st.markdown(f"### {NOMBRE_NEGOCIO}")
@@ -246,7 +310,7 @@ else:
         st.caption(f"Sincronizado: {st.session_state.ultima_sinc}")
         st.divider()
         st.write(f"👤 **{st.session_state.usuario_actual}**")
-        if st.button("Salir"): logout()
+        if st.button("Cerrar Sesión"): logout()
         st.divider()
         if st.button("☁️ Forzar Recarga"):
             sincronizar_inventario_descarga(); st.rerun()
@@ -255,9 +319,11 @@ else:
 
     if menu == "Punto de Venta":
         st.subheader("🛒 Caja Registradora")
+        set_focus_on_scan()
+        
         c_scan, c_qty = st.columns([3, 1])
         with c_qty: st.number_input("Cant", 1, 100, 1, key="qty_scan")
-        with c_scan: st.text_input("🔍 Escanear (Enter)", key="input_scan", on_change=scan_callback)
+        with c_scan: st.text_input("Escanear (Enter)", key="input_scan", on_change=scan_callback)
 
         if st.session_state.carrito:
             for i, item in enumerate(st.session_state.carrito):
@@ -302,7 +368,7 @@ else:
                 df_ventas['fecha'] = pd.to_datetime(df_ventas['fecha'])
                 st.line_chart(df_ventas.groupby(df_ventas['fecha'].dt.hour)['total'].sum())
             st.download_button("📥 Excel", to_excel(df_ventas), "reporte.xlsx")
-        else: st.warning("⚠️ Sin ventas.")
+        else: st.warning("Sin ventas.")
 
     elif menu == "Inventario":
         st.subheader("📦 Inventario Nube")
