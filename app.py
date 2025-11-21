@@ -18,30 +18,31 @@ TIMEOUT_SEGUNDOS = 3600 # 1 Hora de inactividad
 st.set_page_config(page_title=NOMBRE_NEGOCIO, layout="wide", page_icon="📒")
 
 # --- ESTILOS PROFESIONALES (WHITELABEL) ---
+# --- ESTILOS PROFESIONALES (CORREGIDO) ---
 st.markdown("""
     <style>
-    /* 1. Ocultar la barra superior completa (Header) */
-    [data-testid="stHeader"] {
+    /* 1. Ocultar la DECORACIÓN de colores (La franja arcoiris), no la barra entera */
+    [data-testid="stDecoration"] {
         display: none;
     }
     
-    /* 2. Ocultar el menú de opciones (Hamburguesa) */
+    /* 2. Ocultar el menú de opciones (Hamburguesa) de la derecha */
     [data-testid="stToolbar"] {
         visibility: hidden;
     }
 
-    /* 3. Ocultar el pie de página (Made with Streamlit) */
+    /* 3. Ocultar el pie de página */
     footer {
         visibility: hidden;
     }
     
-    /* 4. Ajustar el espacio para que el contenido suba y aproveche la pantalla */
+    /* 4. Ajustar espacio */
     .block-container {
-        padding-top: 1rem;
+        padding-top: 2rem;
         padding-bottom: 1rem;
     }
 
-    /* Estilos del Ticket y Totales */
+    /* Estilos del Ticket */
     .ticket { 
         background-color: #fff; 
         color: #000; 
@@ -52,11 +53,7 @@ st.markdown("""
         line-height: 1.2;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
-    .big-total { 
-        font-size: 28px; 
-        font-weight: bold; 
-        color: #2E7D32; 
-    }
+    .big-total { font-size: 28px; font-weight: bold; color: #2E7D32; }
     </style>
     """, unsafe_allow_html=True)
 
