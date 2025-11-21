@@ -15,35 +15,22 @@ import streamlit.components.v1 as components
 NOMBRE_NEGOCIO = "Papelería La Esperanza"
 UBICACION = "Guadalajara, Jal."
 MONEDA = "$"
-TIMEOUT_SEGUNDOS = 3600  # 1 Hora de inactividad
+TIMEOUT_SEGUNDOS = 3600
 LOGO_URL = "https://cdn-icons-png.flaticon.com/512/3500/3500833.png"
 
 st.set_page_config(page_title=NOMBRE_NEGOCIO, layout="wide", page_icon="📒")
 
 # ==========================================
-# 2. ESTILOS CSS (CLEAN & SAFE)
+# 2. ESTILOS CSS (SOLO LO SEGURO)
 # ==========================================
+# NOTA: Hemos eliminado todo el código que ocultaba el Header/Toolbar
+# para garantizar que el menú de navegación NUNCA falle.
 st.markdown("""
     <style>
-    /* Ocultar el menú de la derecha (Hamburguesa) */
-    [data-testid="stToolbar"] {
-        visibility: hidden;
-        height: 0%;
-    }
-    
-    /* Ocultar la decoración de colores de arriba */
-    [data-testid="stDecoration"] {
-        visibility: hidden;
-        height: 0%;
-    }
-
-    /* Ocultar el pie de página */
+    /* Ocultar solo el pie de página (Esto es seguro) */
     footer {
         visibility: hidden;
-        height: 0%;
     }
-
-    /* NOTA: Respetamos el Header para no romper el botón del menú lateral */
 
     /* Estilos del Ticket */
     .ticket { 
@@ -67,7 +54,7 @@ st.markdown("""
         margin-top: 10px;
     }
 
-    /* Estilo para Estado Vacío (Empty State) */
+    /* Estilo para Estado Vacío */
     .empty-state {
         text-align: center;
         color: #888;
@@ -100,7 +87,7 @@ if 'last_active' not in st.session_state:
     st.session_state.last_active = time.time()
 
 # ==========================================
-# 4. FUNCIONES AUXILIARES
+# 4. FUNCIONES AUXILIARES Y SEGURIDAD
 # ==========================================
 
 def set_focus_on_scan():
@@ -120,7 +107,7 @@ def set_focus_on_scan():
     )
 
 def check_timeout():
-    """Cierra sesión por inactividad"""
+    """Cierra sesión si pasa mucho tiempo inactivo"""
     if st.session_state.logged_in:
         now = time.time()
         if (now - st.session_state.last_active) > TIMEOUT_SEGUNDOS:
@@ -134,7 +121,7 @@ def hora_actual():
     return datetime.now(zona_mx).strftime("%Y-%m-%d %H:%M:%S")
 
 def to_excel(df):
-    """Convierte Dataframe a Excel"""
+    """Convierte Dataframe a Excel para descargar"""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False)
@@ -150,7 +137,7 @@ def get_sql_connection():
 def init_local_db():
     conn = get_sql_connection()
     c = conn.cursor()
-    
+    # Crear tablas si no existen
     c.execute('''CREATE TABLE IF NOT EXISTS productos (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, 
                     codigo_barra TEXT UNIQUE, 
@@ -179,7 +166,7 @@ def init_local_db():
                     subtotal REAL, 
                     FOREIGN KEY(venta_id) REFERENCES ventas(id))''')
     
-    # Crear Admin por defecto
+    # Crear usuario Admin por defecto si está vacío
     c.execute('SELECT count(*) FROM usuarios')
     if c.fetchone()[0] == 0:
         if "general" in st.secrets and "admin_password" in st.secrets["general"]:
@@ -200,21 +187,21 @@ conn = get_sql_connection()
 def get_gsheet_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
-        # Local
+        # Intento Local
         return gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope))
     except FileNotFoundError:
-        # Nube
+        # Intento Nube (Secrets)
         return gspread.authorize(ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope))
 
 def sincronizar_inventario_descarga():
-    """Descarga completa del inventario desde la nube"""
+    """Baja todo de Google y lo guarda en SQLite"""
     try:
         client = get_gsheet_client()
         sheet = client.open("PapeleriaDB").worksheet("Productos")
         datos = sheet.get_all_records()
         
         c = conn.cursor()
-        c.execute("DELETE FROM productos") 
+        c.execute("DELETE FROM productos") # Limpiar local
         
         if datos:
             for p in datos:
@@ -297,7 +284,7 @@ def actualizar_stock_nube_lote(lista_cambios):
         return False
 
 # ==========================================
-# 7. LÓGICA DE NEGOCIO
+# 7. LÓGICA DE LA APLICACIÓN
 # ==========================================
 
 def login(u, p):
@@ -352,7 +339,6 @@ def scan_callback():
                  
                  st.toast(f"✅ Agregado: {prod['nombre']}")
                  
-                 # Alerta de stock bajo
                  stock_restante = prod['stock'] - cant
                  if stock_restante < 5:
                      st.warning(f"⚠️ ¡Atención! Quedan pocas unidades de {prod['nombre']} ({stock_restante})")
@@ -369,7 +355,6 @@ def procesar_venta_final(vendedor, pago):
     fecha = hora_actual()
     
     c = conn.cursor()
-    # Guardar Venta Local
     c.execute("INSERT INTO ventas (fecha, total, vendedor) VALUES (?,?,?)", (fecha, total, vendedor))
     v_id = c.lastrowid
     
@@ -379,13 +364,10 @@ def procesar_venta_final(vendedor, pago):
     cambios_nube = []
     
     for item in st.session_state.carrito:
-        # Guardar Detalles Local
         c.execute("INSERT INTO detalle_ventas (venta_id, producto_nombre, cantidad, precio_unitario, subtotal) VALUES (?,?,?,?,?)", 
                   (v_id, item['nombre'], item['cantidad'], item['precio'], item['subtotal']))
         
-        # Actualizar Stock Local (Instantáneo)
         c.execute("UPDATE productos SET stock = stock - ? WHERE codigo_barra = ?", (item['cantidad'], item['codigo']))
-        
         cambios_nube.append((item['codigo'], item['cantidad']))
         ticket += f"{item['cantidad']} x {item['nombre'][:15]:<15} ${item['subtotal']:>6.2f}\n"
         resumen += f"({item['cantidad']}){item['nombre']}, "
@@ -407,7 +389,6 @@ def procesar_venta_final(vendedor, pago):
 
 check_timeout() 
 
-# Sincronización inicial
 if not st.session_state.inventario_sincronizado:
     with st.spinner("⚡ Conectando con la nube..."):
         sincronizar_inventario_descarga()
@@ -424,7 +405,7 @@ if not st.session_state.logged_in:
             if st.form_submit_button("Ingresar al Sistema", type="primary"):
                 login(u,p)
 
-# --- SISTEMA PRINCIPAL ---
+# --- SISTEMA ---
 else:
     with st.sidebar:
         st.image(LOGO_URL, width=80)
@@ -432,18 +413,14 @@ else:
         st.success("🟢 En Línea")
         st.caption(f"Sync: {st.session_state.ultima_sinc}")
         st.divider()
-        
         st.write(f"👤 **{st.session_state.usuario_actual}**")
-        
         if st.button("Cerrar Sesión"):
             logout()
-            
         st.divider()
         if st.button("☁️ Recargar Inventario"):
             sincronizar_inventario_descarga()
             st.rerun()
 
-    # Menú Dinámico
     if st.session_state.rol_actual == "Gerente":
         opciones_menu = ["Punto de Venta", "Reportes", "Inventario", "Usuarios"]
     else:
@@ -451,9 +428,6 @@ else:
 
     menu = st.sidebar.radio("Ir a:", opciones_menu)
 
-    # ---------------------------------
-    # VISTA: PUNTO DE VENTA
-    # ---------------------------------
     if menu == "Punto de Venta":
         st.subheader("🛒 Caja Registradora")
         set_focus_on_scan()
@@ -465,11 +439,6 @@ else:
             st.text_input("Escanear (Enter)", key="input_scan", on_change=scan_callback)
 
         if st.session_state.carrito:
-            st.markdown("---")
-            # Encabezados de tabla manual
-            c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 1, 0.5])
-            c1.caption("Producto"); c2.caption("Precio"); c3.caption("Cant"); c4.caption("Subtotal")
-            
             for i, item in enumerate(st.session_state.carrito):
                 c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 1, 0.5])
                 c1.write(f"**{item['nombre']}**")
@@ -480,14 +449,12 @@ else:
                     st.session_state.carrito.pop(i)
                     st.rerun()
             
-            # Botón Vaciar Carrito
-            if st.button("🗑️ Cancelar Venta / Vaciar Carrito"):
+            if st.button("🗑️ Vaciar Carrito"):
                 st.session_state.carrito = []
                 st.rerun()
             
-            st.markdown("---")
+            st.divider()
             total = sum(i['subtotal'] for i in st.session_state.carrito)
-            
             c_tot, c_pag = st.columns(2)
             with c_tot:
                 st.markdown(f"<div class='big-total'>Total: ${total:,.2f}</div>", unsafe_allow_html=True)
@@ -498,34 +465,26 @@ else:
                 if pago >= total:
                     ticket = procesar_venta_final(st.session_state.usuario_actual, pago)
                     st.balloons()
-                    
                     c1, c2 = st.columns([1,2])
-                    with c1:
-                        st.markdown(f'<div class="ticket"><pre>{ticket}</pre></div>', unsafe_allow_html=True)
-                    with c2:
+                    with c1: st.markdown(f'<div class="ticket"><pre>{ticket}</pre></div>', unsafe_allow_html=True)
+                    with c2: 
                         st.success("Venta Registrada Exitosamente ✅")
                         st.info("Copia guardada en Google Sheets")
-                    
                     time.sleep(2)
                     st.rerun()
                 else:
                     st.error("Faltan fondos para cubrir el total.")
         else:
-            # Estado Vacío (Empty State)
             st.markdown("""
             <div class='empty-state'>
                 <h1>👋</h1>
                 <h3>Carrito Vacío</h3>
-                <p>Escanea un código de barras o escribe el nombre del producto para comenzar.</p>
+                <p>Escanea un código de barras para comenzar una venta.</p>
             </div>
             """, unsafe_allow_html=True)
 
-    # ---------------------------------
-    # VISTA: REPORTES
-    # ---------------------------------
     elif menu == "Reportes":
         st.subheader("📊 Dashboard Financiero")
-        
         df_ventas = pd.read_sql("SELECT * FROM ventas", conn)
         df_detalles = pd.read_sql("SELECT * FROM detalle_ventas", conn)
         
@@ -534,128 +493,95 @@ else:
             total_ing = df_ventas['total'].sum()
             k1.metric("💰 Ingresos", f"${total_ing:,.2f}")
             k2.metric("🧾 Tickets", len(df_ventas))
-            
             avg_ticket = total_ing / len(df_ventas) if len(df_ventas) > 0 else 0
             k3.metric("📈 Promedio", f"${avg_ticket:,.2f}")
-            
             st.divider()
-            
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown("##### 🏆 Top Productos")
                 if not df_detalles.empty:
                     top_prods = df_detalles.groupby('producto_nombre')['cantidad'].sum().sort_values(ascending=False).head(5)
                     st.bar_chart(top_prods)
-            
             with c2:
                 st.markdown("##### 📅 Ventas por Hora")
                 df_ventas['fecha'] = pd.to_datetime(df_ventas['fecha'])
                 ventas_hora = df_ventas.groupby(df_ventas['fecha'].dt.hour)['total'].sum()
                 st.line_chart(ventas_hora)
-
-            st.download_button("📥 Descargar Reporte Excel", to_excel(df_ventas), "reporte_ventas.xlsx")
+            st.download_button("📥 Descargar Excel Completo", to_excel(df_ventas), "reporte_ventas.xlsx")
         else:
-            st.info("Aún no hay ventas registradas para mostrar estadísticas.")
+            st.info("Aún no hay ventas registradas.")
 
-    # ---------------------------------
-    # VISTA: INVENTARIO
-    # ---------------------------------
     elif menu == "Inventario":
         st.subheader("📦 Inventario Nube")
-        
         if st.session_state.editando_id:
-            # Formulario de Edición
             prod_row = pd.read_sql(f"SELECT * FROM productos WHERE id={st.session_state.editando_id}", conn).iloc[0]
-            
             st.info(f"✏️ Editando: {prod_row['nombre']}")
             with st.form("edit_form"):
                 c1, c2 = st.columns(2)
                 nn = c1.text_input("Nombre", value=prod_row['nombre'])
                 np = c2.number_input("Precio", value=float(prod_row['precio']), min_value=0.01)
                 ns = st.number_input("Stock", value=int(prod_row['stock']))
-                
                 if st.form_submit_button("Guardar Cambios"):
                     if editar_producto_nube(prod_row['codigo_barra'], nn, np, ns):
                         sincronizar_inventario_descarga()
                         st.session_state.editando_id = None
-                        st.success("Producto actualizado correctamente")
+                        st.success("Producto actualizado")
                         st.rerun()
                     else:
-                        st.error("Error al conectar con Google Sheets")
-            
-            if st.button("Cancelar Edición"):
+                        st.error("Error Nube")
+            if st.button("Cancelar"):
                 st.session_state.editando_id = None
                 st.rerun()
-        
         else:
-            # Formulario de Alta
             with st.expander("➕ Agregar Nuevo Producto"):
                 c1,c2,c3,c4 = st.columns(4)
                 nc = c1.text_input("Código", key="new_c")
                 nn = c2.text_input("Nombre", key="new_n")
                 np = c3.number_input("Precio", 0.0, key="new_p")
                 ns = c4.number_input("Stock", 1, key="new_s")
-                
                 if st.button("Guardar en Nube"):
-                    if nc and nn and np > 0:
+                    if nc and nn:
                         if guardar_producto_nube(nc, nn, np, ns):
                             sincronizar_inventario_descarga()
-                            st.success("Producto guardado exitosamente")
+                            st.success("¡Guardado!")
                             st.rerun()
-                        else:
-                            st.error("Error al guardar")
-                    else:
-                        st.warning("Por favor llena todos los datos correctamente")
-
-            # Tabla de Visualización
+                        else: st.error("Error")
+                    else: st.warning("Faltan datos")
             df = pd.read_sql("SELECT * FROM productos", conn)
             st.dataframe(df[['codigo_barra', 'nombre', 'precio', 'stock']], use_container_width=True)
-            
             st.divider()
-            
-            # Panel de Acciones
             col_act1, col_act2 = st.columns(2)
             with col_act1:
-                prod_accion = st.selectbox("Selecciona un producto para modificar:", df['nombre'])
-            
+                prod_accion = st.selectbox("Selecciona un producto:", df['nombre'])
             with col_act2:
-                st.write("")
-                st.write("")
+                st.write(""); st.write("")
                 c_edit, c_del = st.columns(2)
-                
-                if c_edit.button("✏️ Editar Producto"):
+                if c_edit.button("✏️ Editar"):
                     id_sel = df[df['nombre'] == prod_accion].iloc[0]['id']
                     st.session_state.editando_id = id_sel
                     st.rerun()
-                
-                if c_del.button("🗑️ Borrar Producto"):
+                if c_del.button("🗑️ Borrar"):
                     cod_sel = df[df['nombre'] == prod_accion].iloc[0]['codigo_barra']
                     if eliminar_producto_nube(cod_sel):
                         sincronizar_inventario_descarga()
-                        st.success("Producto eliminado")
+                        st.success("Eliminado")
                         st.rerun()
 
-    # ---------------------------------
-    # VISTA: USUARIOS
-    # ---------------------------------
     elif menu == "Usuarios":
         st.subheader("👥 Gestión de Personal")
-        
         with st.form("new_user"):
             c1, c2, c3 = st.columns(3)
             un = c1.text_input("Usuario")
             up = c2.text_input("Contraseña", type="password")
             ur = c3.selectbox("Rol", ["Empleado", "Gerente"])
-            
             if st.form_submit_button("Crear Usuario"):
                 try:
                     c = conn.cursor()
                     c.execute("INSERT INTO usuarios (nombre, password, rol) VALUES (?,?,?)", (un, up, ur))
                     conn.commit()
-                    st.success("Usuario creado correctamente")
+                    st.success("Usuario creado")
                     st.rerun()
                 except sqlite3.IntegrityError:
-                    st.error("Nombre de usuario ya existe")
-        
+                    st.error("Usuario ya existe")
         st.write("Usuarios registrados:")
         st.dataframe(pd.read_sql("SELECT nombre, rol FROM usuarios", conn), use_container_width=True)
