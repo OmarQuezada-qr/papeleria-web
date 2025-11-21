@@ -12,7 +12,7 @@ import streamlit.components.v1 as components
 # ==========================================
 # 1. CONFIGURACIÓN DEL NEGOCIO
 # ==========================================
-NOMBRE_NEGOCIO = "Papelería La Esperanza"
+NOMBRE_NEGOCIO = "Papelería ELLA"
 UBICACION = "Guadalajara, Jal."
 MONEDA = "$"
 TIMEOUT_SEGUNDOS = 3600
