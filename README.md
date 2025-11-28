@@ -1,4 +1,4 @@
-# 🛒 Sistema de Gestión Papelería PRO (V9.2)
+# 🛒 Sistema de Gestión Papelería PRO (V16)
 
 Sistema de Punto de Venta (POS) Híbrido diseñado para PyMEs. Combina la velocidad de una base de datos local (SQLite) para el cobro inmediato con la seguridad de la nube (Google Sheets) para el respaldo de datos.
 
@@ -15,4 +15,5 @@ Sistema de Punto de Venta (POS) Híbrido diseñado para PyMEs. Combina la veloci
 - **Análisis:** Pandas, Altair, OpenPyXL
 
 ## 📸 Acceso al Demo
+
 Acceso: Para probar el demo, contactar al desarrollador para obtener credenciales, o configurar sus propios secretos.
